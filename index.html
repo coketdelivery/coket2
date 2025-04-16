@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- 모바일 최적화 -->
+  <title>걸코TV 코켓배송 테트리스 게임</title>
+  <style>
+    body {
+      background: #fff;
+      color: #000;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+      position: relative;
+    }
+    /* 데스크탑 기본 캔버스 크기 */
+    #gameCanvas {
+      background: #000;
+      border: 2px solid #000;
+      margin: 20px auto;
+      display: block;
+      touch-action: none;
+    }
+    /* 모바일에서는 캔버스 너비를 화면에 맞춰 조정 (높이는 비율에 맞게) */
+    @media (max-width: 600px) {
+      #gameCanvas {
+        width: 90vw;
+        height: calc(90vw * 2); /* 세로:가로비율 2:1 (예: 원본 300x600) */
+      }
+    }
+    #scoreBoard, #timeBoard {
+      margin: 10px;
+      font-size: 20px;
+    }
+    /* 오버레이 (게임 시작 안내 및 게임 오버 안내를 모두 표시) */
+    #overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      border: 2px solid #000;
+      padding: 20px;
+      background: #eee;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      z-index: 10;
+      width: 300px;
+      max-width: 80%;
+    }
+    /* 시작 버튼(초기) / 재시작 버튼(게임오버 후) 공통 스타일 */
+    #overlay button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 15px 30px;
+      font-size: 24px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    #overlay button:hover {
+      background-color: #45a049;
+    }
+
+    /* 게임 플레이 중 중앙에 뜨는 레벨업 메시지 (글자 크기 20px) */
+    #levelUpMessage {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      border: 2px solid white;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 5px 10px;
+      font-size: 20px;
+      font-weight: bold;
+      display: none;
+      z-index: 5;
+    }
+    #copyright {
+      margin-top: 20px;
+      font-size: 14px;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <!-- 안내 제목/내용 (초기 안내) -->
+  <div id="overlay">
+    <h2>♥ 코켓배송-테트리스 ♥</h2>
+    <p>유튜브 '걸코_Gulko' 저작권 콘텐츠입니다.<br>
+    <p>© 2025 코켓게임즈. All rights reserved.<br>
+      <a href="https://www.youtube.com/@Gulko" target="_blank">https://www.youtube.com/@Gulko</a></p>
+       </a>
+    </p>
+    <button id="startButton" disabled>게임 시작</button>
+  </div>
+
+  <!-- 게임 캔버스 -->
+  <canvas id="gameCanvas" width="300" height="600"></canvas>
+  
+  <!-- 게임 플레이 중 레벨업 메시지 (화면 중앙) -->
+  <div id="levelUpMessage"></div>
+
+  <!-- 점수와 시간 표시 -->
+  <div id="scoreBoard">Score: 0</div>
+  <div id="timeBoard">Time: 0:00</div>
+  
+  <!-- 저작권 문구 -->
+  <div id="copyright">
+    유튜브 "걸코_Gulko"저작권 콘텐츠입니다. 
+    <a href="https://www.youtube.com/@Gulko" target="_blank" style="color:#333;">https://www.youtube.com/@Gulko</a><br>
+    © 2025 코켓게임즈. All rights reserved.
+  </div>
+
+  <audio id="blockDropSound" src="drop_sound.mp3"></audio>
+  <audio id="lineClearSound" src="clear_sound.mp3"></audio>
+  <audio id="blockBottomSound" src="block_bottom.mp3"></audio>
+  <audio id="levelUpSound" src="levelup_sound.mp3"></audio>
+  <audio id="bgMusic" src="bg_music.mp3" loop></audio>
+
+  <script>
+    // DOM 요소 및 캔버스 가져오기
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreBoard = document.getElementById('scoreBoard');
+    const timeBoard = document.getElementById('timeBoard');
+    const startButton = document.getElementById('startButton');
+    const overlay = document.getElementById('overlay');
+    const levelUpMessageDiv = document.getElementById('levelUpMessage');
+    const blockDropSound = document.getElementById('blockDropSound');
+    const lineClearSound = document.getElementById('lineClearSound');
+    const blockBottomSound = document.getElementById('blockBottomSound');
+    const levelUpSound = document.getElementById('levelUpSound');
+    const bgMusic = document.getElementById('bgMusic');
+
+    // 배경 이미지 추가
+    const backgroundImg = new Image();
+    backgroundImg.src = 'background.jpg'; // 예: background.jpg
+
+    // 게임 관련 변수
+    let score = 0;
+    let gameInterval;
+    let gameSpeed = 1000; // 초기 블록 이동 속도 (ms)
+    let levelTimer = Date.now(); // 난이도 조절 기준 시간
+    let level = 1; // 초기 레벨
+    let startTime; // 게임 시작 시간
+
+    // 게임 보드 (20행 x 10열)
+    const ROWS = 20, COLS = 10;
+    const BLOCK_SIZE = 30;
+    let board = [];
+
+    function initBoard() {
+      board = [];
+      for (let r = 0; r < ROWS; r++) {
+        board[r] = new Array(COLS).fill(0);
+      }
+    }
+
+    // 테트로미노 타입 및 이미지 객체 생성
+    const blockTypes = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
+    const blockImages = {};
+    blockTypes.forEach(type => {
+      const img = new Image();
+      img.src = type.toLowerCase() + '_block.png';
+      blockImages[type] = img;
+    });
+
+    // 테트로미노 모양 정의
+    const shapes = {
+      'I': [[1, 1, 1, 1]],
+      'O': [[1, 1], [1, 1]],
+      'T': [[0, 1, 0], [1, 1, 1]],
+      'S': [[0, 1, 1], [1, 1, 0]],
+      'Z': [[1, 1, 0], [0, 1, 1]],
+      'J': [[1, 0, 0], [1, 1, 1]],
+      'L': [[0, 0, 1], [1, 1, 1]]
+    };
+
+    // 'bag' 알고리즘: 남은 블록들을 저장하는 배열
+    let blockBag = [];
+    function refillBag() {
+      blockBag = [...blockTypes];
+      // Fisher-Yates shuffle 알고리즘으로 섞기
+      for (let i = blockBag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [blockBag[i], blockBag[j]] = [blockBag[j], blockBag[i]];
+      }
+    }
+
+    // 현재 떨어지는 블록 정보
+    let currentBlock = {
+      type: null,
+      shape: null,
+      x: 0,
+      y: 0
+    };
+
+    // 새 블록 생성 (bag을 이용) 및 게임 오버 체크
+    function spawnBlock() {
+      if (blockBag.length === 0) {
+        refillBag();
+      }
+      currentBlock.type = blockBag.pop();
+      currentBlock.shape = shapes[currentBlock.type] || [[1]];
+      currentBlock.x = Math.floor((COLS - currentBlock.shape[0].length) / 2);
+      currentBlock.y = 0;
+      if (collision(currentBlock.x, currentBlock.y, currentBlock.shape)) {
+        gameOver();
+      }
+    }
+
+    // 충돌 검사
+    function collision(newX, newY, newShape) {
+      for (let r = 0; r < newShape.length; r++) {
+        for (let c = 0; c < newShape[r].length; c++) {
+          if (newShape[r][c]) {
+            let boardX = newX + c;
+            let boardY = newY + r;
+            if (boardX < 0 || boardX >= COLS || boardY >= ROWS) return true;
+            if (boardY >= 0 && board[boardY][boardX]) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // 현재 블록을 보드에 고정
+    function fixBlock() {
+      const shape = currentBlock.shape;
+      for (let r = 0; r < shape.length; r++) {
+        for (let c = 0; c < shape[r].length; c++) {
+          if (shape[r][c]) {
+            let boardX = currentBlock.x + c;
+            let boardY = currentBlock.y + r;
+            if (boardY >= 0 && boardY < ROWS && boardX >= 0 && boardX < COLS) {
+              board[boardY][boardX] = currentBlock.type;
+            }
+          }
+        }
+      }
+      checkLineClear();
+    }
+
+    // 줄 삭제 및 점수 업데이트
+    function checkLineClear() {
+      let linesCleared = 0;
+      for (let r = 0; r < ROWS; r++) {
+        if (board[r].every(cell => cell !== 0)) {
+          board.splice(r, 1);
+          board.unshift(new Array(COLS).fill(0));
+          score += 100;
+          linesCleared++;
+        }
+      }
+      if (linesCleared > 0) {
+        lineClearSound.play().catch(() => {});
+      }
+    }
+
+    // 블록을 아래로 이동
+    function moveBlockDown() {
+      if (!collision(currentBlock.x, currentBlock.y + 1, currentBlock.shape)) {
+        currentBlock.y++;
+        blockDropSound.play().catch(() => {});
+      } else {
+        blockBottomSound.play().catch(() => {});
+        fixBlock();
+        spawnBlock();
+      }
+    }
+
+    // 레벨업 메시지 표시 (화면 중앙에 3초간 표시)
+    function showLevelUpMessage() {
+      levelUpMessageDiv.textContent = "LEVEL " + level + " - 사랑합니다 고객님";
+      levelUpMessageDiv.style.display = "block";
+      levelUpSound.play().catch(() => {});
+      setTimeout(() => {
+        levelUpMessageDiv.style.display = "none";
+      }, 3000);
+    }
+
+    // 난이도 조절 (30초마다 레벨 상승, 속도 200ms씩 빨라짐)
+    function updateDifficulty() {
+      const elapsed = Date.now() - levelTimer;
+      if (elapsed >= 30000) {
+        gameSpeed = Math.max(200, gameSpeed - 200);
+        level++;
+        showLevelUpMessage();
+        clearInterval(gameInterval);
+        gameInterval = setInterval(gameLoop, gameSpeed);
+        levelTimer = Date.now();
+      }
+    }
+
+    // 점수 및 시간 업데이트
+    function updateScoreAndTime() {
+      scoreBoard.textContent = "Score: " + score;
+      const totalSeconds = Math.floor((Date.now() - startTime) / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      timeBoard.textContent = "Time: " + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+    }
+
+    // 보드 및 현재 블록 그리기 (배경 이미지 포함)
+    function drawBoard() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(backgroundImg, 0, 0, canvas.width, canvas.height);
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (board[r][c]) {
+            ctx.drawImage(
+              blockImages[board[r][c]],
+              c * BLOCK_SIZE,
+              r * BLOCK_SIZE,
+              BLOCK_SIZE,
+              BLOCK_SIZE
+            );
+            ctx.strokeStyle = "#fff";
+            ctx.strokeRect(c * BLOCK_SIZE, r * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+          }
+        }
+      }
+    }
+
+    function drawCurrentBlock() {
+      const shape = currentBlock.shape;
+      for (let r = 0; r < shape.length; r++) {
+        for (let c = 0; c < shape[r].length; c++) {
+          if (shape[r][c]) {
+            let x = (currentBlock.x + c) * BLOCK_SIZE;
+            let y = (currentBlock.y + r) * BLOCK_SIZE;
+            ctx.drawImage(blockImages[currentBlock.type], x, y, BLOCK_SIZE, BLOCK_SIZE);
+            ctx.strokeStyle = "#fff";
+            ctx.strokeRect(x, y, BLOCK_SIZE, BLOCK_SIZE);
+          }
+        }
+      }
+    }
+
+    function draw() {
+      drawBoard();
+      drawCurrentBlock();
+    }
+
+    function gameLoop() {
+      moveBlockDown();
+      updateDifficulty();
+      updateScoreAndTime();
+      draw();
+    }
+
+    // ─────────────────────────────────────────────────
+    //   게임 오버 시 오버레이에 게임오버 안내 표시
+    //   + 재시작 버튼 제공
+    // ─────────────────────────────────────────────────
+    function showGameOverOverlay() {
+      overlay.innerHTML = `
+        <h2>게임 오버! 😢</h2>
+        <p>코팡 구입은 걸코와함께</p>
+        <p><a href="https://www.youtube.com/@Gulko" target="_blank">
+          https://www.youtube.com/@Gulko
+        </a></p>
+        <p>사랑합니다. 고객님</p>
+        <button id="restartButton">재시작</button>
+      `;
+      overlay.style.display = "flex";
+
+      // 재시작 버튼 이벤트
+      const restartButton = document.getElementById('restartButton');
+      restartButton.addEventListener('click', function() {
+        // 오버레이 숨기고
+        overlay.style.display = "none";
+        // 음악 처음부터 다시 재생
+        bgMusic.currentTime = 0;
+        bgMusic.play().catch(() => {});
+        // 게임 초기화
+        init();
+      });
+    }
+
+    function gameOver() {
+      clearInterval(gameInterval);
+      levelUpMessageDiv.style.display = "none";
+      // 배경음악을 일시정지 후 처음 위치로 돌려 놓기 (재시작 시 다시 시작되도록)
+      bgMusic.pause();
+      bgMusic.currentTime = 0;
+      showGameOverOverlay();
+    }
+
+    // 게임 초기화 및 시작
+    function init() {
+      score = 0;
+      level = 1;
+      gameSpeed = 1000;
+      levelTimer = Date.now();
+      startTime = Date.now();
+      initBoard();
+      refillBag();
+      spawnBlock();
+      // 게임 루프 시작
+      gameInterval = setInterval(gameLoop, gameSpeed);
+    }
+
+    // 키보드 이벤트 (데스크탑)
+    document.addEventListener('keydown', function(event) {
+      if (bgMusic.paused) bgMusic.play().catch(() => {});
+      switch (event.key) {
+        case 'ArrowLeft':
+          if (!collision(currentBlock.x - 1, currentBlock.y, currentBlock.shape)) {
+            currentBlock.x--;
+          }
+          break;
+        case 'ArrowRight':
+          if (!collision(currentBlock.x + 1, currentBlock.y, currentBlock.shape)) {
+            currentBlock.x++;
+          }
+          break;
+        case 'ArrowDown':
+          moveBlockDown();
+          break;
+        case 'ArrowUp':
+          let rotatedShape = rotateMatrix(currentBlock.shape);
+          if (!collision(currentBlock.x, currentBlock.y, rotatedShape)) {
+            currentBlock.shape = rotatedShape;
+          }
+          break;
+      }
+      draw();
+    });
+
+    // 모바일 터치 이벤트 처리
+    let touchStartX = 0, touchStartY = 0, touchEndX = 0, touchEndY = 0;
+    const swipeThreshold = 30;
+    canvas.addEventListener('touchstart', function(e) {
+      const touch = e.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      if (bgMusic.paused) bgMusic.play().catch(() => {});
+    });
+    canvas.addEventListener('touchmove', function(e) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      touchEndX = touch.clientX;
+      touchEndY = touch.clientY;
+      // 아래로 스와이프 시 빠른 하강
+      if (touchEndY - touchStartY > swipeThreshold) {
+        moveBlockDown();
+        draw();
+        touchStartY = touchEndY; 
+      }
+    });
+    canvas.addEventListener('touchend', function(e) {
+      const deltaX = touchEndX - touchStartX;
+      const deltaY = touchEndY - touchStartY;
+      // 좌우 스와이프
+      if (Math.abs(deltaX) > Math.abs(deltaY)) {
+        if (deltaX > swipeThreshold) {
+          // 오른쪽 이동
+          if (!collision(currentBlock.x + 1, currentBlock.y, currentBlock.shape)) {
+            currentBlock.x++;
+          }
+        } else if (deltaX < -swipeThreshold) {
+          // 왼쪽 이동
+          if (!collision(currentBlock.x - 1, currentBlock.y, currentBlock.shape)) {
+            currentBlock.x--;
+          }
+        }
+      } else {
+        // 위로 스와이프 시 회전
+        if (deltaY < -swipeThreshold) {
+          let rotatedShape = rotateMatrix(currentBlock.shape);
+          if (!collision(currentBlock.x, currentBlock.y, rotatedShape)) {
+            currentBlock.shape = rotatedShape;
+          }
+        }
+      }
+      draw();
+    });
+
+    // 행렬 회전 함수 (시계 방향)
+    function rotateMatrix(matrix) {
+      let result = [];
+      for (let c = 0; c < matrix[0].length; c++) {
+        let newRow = [];
+        for (let r = matrix.length - 1; r >= 0; r--) {
+          newRow.push(matrix[r][c]);
+        }
+        result.push(newRow);
+      }
+      return result;
+    }
+
+    // 이미지 로드 확인: 모든 이미지 로드 후 시작 버튼 활성화
+    let imagesLoaded = 0;
+    const totalImages = blockTypes.length;
+    blockTypes.forEach(type => {
+      blockImages[type].onload = function() {
+        imagesLoaded++;
+        if (imagesLoaded === totalImages) {
+          startButton.disabled = false;
+          startButton.textContent = "게임 시작";
+        }
+      };
+    });
+    startButton.disabled = true;
+    startButton.textContent = "로딩중...";
+
+    // 시작 버튼 클릭 시 안내 창 숨기고 게임 시작
+    startButton.addEventListener('click', function() {
+      overlay.style.display = "none";
+      bgMusic.volume = 0.3;
+      if (bgMusic.paused) bgMusic.play().catch(() => {});
+      init();
+    });
+  </script>
+</body>
+</html>
